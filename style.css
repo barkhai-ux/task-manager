@@ -1,52 +1,162 @@
-/* Completed task styling */
-.task-completed .task-title {
-    text-decoration: line-through;
-    opacity: 0.5;
-}
-.task-completed .task-subtitle {
-    opacity: 0.4;
+/* ── Global ──────────────────────────────────────────────────── */
+
+.app-title {
+    font-weight: 800;
+    font-size: 1.1em;
+    letter-spacing: 0.5px;
 }
 
-/* Priority indicators */
-.priority-high {
-    color: #e01b24;
-    font-weight: bold;
-}
-.priority-medium {
-    color: #ff7800;
-    font-weight: bold;
-}
-.priority-low {
-    color: #33d17a;
-    font-weight: bold;
+/* ── Sidebar ────────────────────────────────────────────────── */
+
+.sidebar-section-title {
+    font-size: 0.75em;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    opacity: 0.55;
+    margin-top: 6px;
+    margin-bottom: 2px;
 }
 
-/* Overdue date */
-.overdue {
-    color: #e01b24;
-    font-weight: 600;
-}
-
-/* Sidebar category row */
-.sidebar-row {
-    padding: 6px 12px;
-}
-
-/* Category color dot */
 .category-dot {
     min-width: 12px;
     min-height: 12px;
     border-radius: 6px;
 }
 
-/* Task count badge */
-.task-count {
-    font-size: 0.85em;
-    opacity: 0.6;
-    min-width: 24px;
+/* ── Task Rows ──────────────────────────────────────────────── */
+
+.task-row {
+    padding: 10px 14px;
+    transition: background-color 150ms ease;
 }
 
-/* Empty state page */
+.task-title {
+    font-weight: 600;
+    font-size: 1.02em;
+}
+
+.task-subtitle {
+    font-size: 0.88em;
+    margin-top: 2px;
+}
+
+.task-completed .task-title {
+    text-decoration: line-through;
+    opacity: 0.45;
+}
+.task-completed .task-subtitle {
+    opacity: 0.35;
+}
+.task-completed .priority-badge {
+    opacity: 0.35;
+}
+
+/* ── Priority Badges ────────────────────────────────────────── */
+
+.priority-badge {
+    font-size: 0.78em;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 10px;
+    min-width: 36px;
+}
+
+.priority-high {
+    background: alpha(#e01b24, 0.15);
+    color: #e01b24;
+}
+.priority-medium {
+    background: alpha(#ff7800, 0.15);
+    color: #ff7800;
+}
+.priority-low {
+    background: alpha(#33d17a, 0.15);
+    color: #33d17a;
+}
+
+/* ── Due Date ───────────────────────────────────────────────── */
+
+.due-badge {
+    font-size: 0.8em;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: alpha(@accent_bg_color, 0.12);
+    color: @accent_fg_color;
+}
+
+.overdue {
+    background: alpha(#e01b24, 0.12);
+    color: #e01b24;
+    font-weight: 700;
+}
+
+.due-today {
+    background: alpha(#ff7800, 0.15);
+    color: #ff7800;
+    font-weight: 700;
+}
+
+/* ── Count Badges ───────────────────────────────────────────── */
+
+.count-badge {
+    font-size: 0.78em;
+    font-weight: 700;
+    min-width: 22px;
+    padding: 1px 7px;
+    border-radius: 10px;
+    background: alpha(@accent_bg_color, 0.15);
+    color: @accent_color;
+}
+
+.count-badge-zero {
+    opacity: 0.3;
+    background: none;
+}
+
+/* ── Action Buttons (edit/delete) ───────────────────────────── */
+
+.task-actions button {
+    opacity: 0.4;
+    transition: opacity 150ms ease;
+}
+.task-actions button:hover {
+    opacity: 1.0;
+}
+.task-actions .delete-btn:hover {
+    color: #e01b24;
+}
+
+/* ── Empty State ────────────────────────────────────────────── */
+
 .empty-state {
-    opacity: 0.7;
+    opacity: 0.65;
+}
+
+/* ── Add Task Button ────────────────────────────────────────── */
+
+.add-task-btn {
+    font-weight: 700;
+}
+
+/* ── Appearance Section ─────────────────────────────────────── */
+
+.theme-selector {
+    margin-top: 4px;
+    margin-bottom: 4px;
+}
+
+.theme-btn {
+    min-width: 44px;
+    min-height: 34px;
+    border-radius: 8px;
+    padding: 4px 10px;
+    font-size: 0.85em;
+    font-weight: 600;
+}
+
+.theme-btn-active {
+    background: @accent_bg_color;
+    color: @accent_fg_color;
 }

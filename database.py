@@ -25,6 +25,11 @@ CREATE TABLE IF NOT EXISTS tasks (
     completed_at TEXT DEFAULT NULL,
     FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL
 );
+
+CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 SORT_CLAUSES = {
@@ -193,3 +198,19 @@ class Database:
         ).fetchone()[0]
         counts["all"] = total
         return counts
+
+    # ── Settings ────────────────────────────────────────────────
+
+    def get_setting(self, key: str, default: str = "") -> str:
+        row = self.conn.execute(
+            "SELECT value FROM app_settings WHERE key=?", (key,)
+        ).fetchone()
+        return row[0] if row else default
+
+    def set_setting(self, key: str, value: str):
+        self.conn.execute(
+            "INSERT INTO app_settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value),
+        )
+        self.conn.commit()
