@@ -1,137 +1,320 @@
-/* ── Global ──────────────────────────────────────────────────── */
+/* ── Dark Dashboard Theme ─────────────────────────────────────── */
 
-.app-title {
-    font-weight: 800;
-    font-size: 1.1em;
-    letter-spacing: 0.5px;
-}
+/* Override libadwaita dark colors for deep navy look */
+@define-color window_bg_color #0f1019;
+@define-color headerbar_bg_color #0a0b12;
+@define-color headerbar_fg_color #e0e0f0;
+@define-color view_bg_color #0f1019;
+@define-color card_bg_color #181924;
+@define-color popover_bg_color #1c1d2a;
+@define-color sidebar_bg_color #0a0b12;
+@define-color sidebar_fg_color #c0c0d8;
+@define-color accent_bg_color #4488ff;
+@define-color accent_fg_color #ffffff;
+@define-color accent_color #4488ff;
 
 /* ── Sidebar ────────────────────────────────────────────────── */
 
+.sidebar {
+    background-color: #0b0c14;
+}
+
 .sidebar-section-title {
-    font-size: 0.75em;
+    font-size: 0.7em;
     font-weight: 700;
-    letter-spacing: 1px;
+    letter-spacing: 1.2px;
     text-transform: uppercase;
-    opacity: 0.55;
-    margin-top: 6px;
+    color: rgba(255,255,255,0.3);
+    margin-top: 8px;
     margin-bottom: 2px;
 }
 
-.category-dot {
-    min-width: 12px;
-    min-height: 12px;
-    border-radius: 6px;
+.sidebar-separator {
+    background-color: rgba(255,255,255,0.06);
+    min-height: 1px;
 }
 
-/* ── Task Rows ──────────────────────────────────────────────── */
-
-.task-row {
-    padding: 10px 14px;
-    transition: background-color 150ms ease;
-}
-
-.task-title {
-    font-weight: 600;
-    font-size: 1.02em;
-}
-
-.task-subtitle {
-    font-size: 0.88em;
-    margin-top: 2px;
-}
-
-.task-completed .task-title {
-    text-decoration: line-through;
-    opacity: 0.45;
-}
-.task-completed .task-subtitle {
-    opacity: 0.35;
-}
-.task-completed .priority-badge {
-    opacity: 0.35;
-}
-
-/* ── Priority Badges ────────────────────────────────────────── */
-
-.priority-badge {
-    font-size: 0.78em;
-    font-weight: 700;
-    padding: 2px 8px;
+.nav-row {
     border-radius: 10px;
-    min-width: 36px;
+    margin: 2px 8px;
+    padding: 8px 12px;
 }
 
-.priority-high {
-    background: alpha(#e01b24, 0.15);
-    color: #e01b24;
-}
-.priority-medium {
-    background: alpha(#ff7800, 0.15);
-    color: #ff7800;
-}
-.priority-low {
-    background: alpha(#33d17a, 0.15);
-    color: #33d17a;
+/* ── Cards ──────────────────────────────────────────────────── */
+
+.dashboard-card {
+    background-color: #181924;
+    border-radius: 16px;
+    border: 1px solid rgba(255,255,255,0.05);
+    padding: 20px;
 }
 
-/* ── Due Date ───────────────────────────────────────────────── */
+.card-title {
+    font-weight: 700;
+    font-size: 1.05em;
+    color: rgba(255,255,255,0.9);
+}
 
-.due-badge {
-    font-size: 0.8em;
+.card-action {
+    color: @accent_color;
+    font-size: 0.85em;
     font-weight: 600;
-    padding: 2px 8px;
-    border-radius: 10px;
-    background: alpha(@accent_bg_color, 0.12);
-    color: @accent_fg_color;
-}
-
-.overdue {
-    background: alpha(#e01b24, 0.12);
-    color: #e01b24;
-    font-weight: 700;
-}
-
-.due-today {
-    background: alpha(#ff7800, 0.15);
-    color: #ff7800;
-    font-weight: 700;
 }
 
 /* ── Count Badges ───────────────────────────────────────────── */
 
 .count-badge {
-    font-size: 0.78em;
+    font-size: 0.75em;
     font-weight: 700;
-    min-width: 22px;
-    padding: 1px 7px;
+    min-width: 20px;
+    padding: 2px 8px;
     border-radius: 10px;
-    background: alpha(@accent_bg_color, 0.15);
-    color: @accent_color;
+    background: rgba(68,136,255,0.2);
+    color: #6ea8ff;
 }
 
 .count-badge-zero {
-    opacity: 0.3;
-    background: none;
+    opacity: 0.25;
+    background: rgba(255,255,255,0.06);
+    color: rgba(255,255,255,0.4);
 }
 
-/* ── Action Buttons (edit/delete) ───────────────────────────── */
+/* ── Priority Colors ────────────────────────────────────────── */
+
+.priority-high  { color: #e04040; }
+.priority-med   { color: #e88800; }
+.priority-low   { color: #40c060; }
+
+.priority-badge {
+    font-size: 0.72em;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 8px;
+}
+
+.badge-high {
+    background: rgba(224,64,64,0.15);
+    color: #e04040;
+}
+.badge-med {
+    background: rgba(232,136,0,0.15);
+    color: #e88800;
+}
+.badge-low {
+    background: rgba(64,192,96,0.15);
+    color: #40c060;
+}
+
+/* ── Dashboard Task Items ───────────────────────────────────── */
+
+.task-item {
+    padding: 8px 4px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+
+.task-item:last-child {
+    border-bottom: none;
+}
+
+.task-item-title {
+    font-weight: 600;
+    font-size: 0.92em;
+    color: rgba(255,255,255,0.88);
+}
+
+.task-item-desc {
+    font-size: 0.8em;
+    color: rgba(255,255,255,0.35);
+}
+
+.task-item-completed .task-item-title {
+    text-decoration: line-through;
+    opacity: 0.4;
+}
+
+/* ── Week View ──────────────────────────────────────────────── */
+
+.week-day-col {
+    background-color: rgba(255,255,255,0.02);
+    border-radius: 12px;
+    padding: 10px 8px;
+    min-width: 70px;
+}
+
+.week-day-today {
+    background-color: rgba(68,136,255,0.08);
+    border: 1px solid rgba(68,136,255,0.15);
+}
+
+.week-day-header {
+    font-size: 0.78em;
+    font-weight: 700;
+    color: rgba(255,255,255,0.45);
+    margin-bottom: 6px;
+}
+
+.week-day-header-today {
+    color: #6ea8ff;
+}
+
+.week-task-card {
+    background-color: rgba(255,255,255,0.04);
+    border-radius: 10px;
+    padding: 8px 10px;
+    border-left: 3px solid transparent;
+    margin-bottom: 4px;
+}
+
+.week-task-high  { border-left-color: #e04040; }
+.week-task-med   { border-left-color: #e88800; }
+.week-task-low   { border-left-color: #40c060; }
+
+.week-task-title {
+    font-size: 0.82em;
+    font-weight: 600;
+    color: rgba(255,255,255,0.82);
+}
+
+.week-task-desc {
+    font-size: 0.72em;
+    color: rgba(255,255,255,0.3);
+}
+
+.week-task-priority {
+    font-size: 0.68em;
+    font-weight: 700;
+}
+
+.week-empty {
+    font-size: 0.75em;
+    opacity: 0.2;
+    padding: 12px 4px;
+}
+
+/* ── Stats Panel ────────────────────────────────────────────── */
+
+.stats-panel {
+    background-color: #0e0f18;
+}
+
+.stat-big-number {
+    font-size: 2.4em;
+    font-weight: 800;
+    color: rgba(255,255,255,0.95);
+}
+
+.stat-label {
+    font-size: 0.82em;
+    color: rgba(255,255,255,0.4);
+}
+
+.stat-trend-up {
+    font-size: 0.8em;
+    font-weight: 700;
+    color: #40c060;
+    padding: 2px 8px;
+    border-radius: 8px;
+    background: rgba(64,192,96,0.12);
+}
+
+.legend-name {
+    font-size: 0.85em;
+    color: rgba(255,255,255,0.75);
+}
+
+.legend-pct {
+    font-size: 0.85em;
+    color: rgba(255,255,255,0.4);
+}
+
+/* ── Reminders ──────────────────────────────────────────────── */
+
+.reminder-row {
+    background-color: rgba(255,255,255,0.03);
+    border-radius: 12px;
+    padding: 12px 14px;
+}
+
+.reminder-date {
+    font-size: 1.15em;
+    font-weight: 800;
+    color: rgba(255,255,255,0.9);
+}
+
+.reminder-date-sub {
+    font-size: 0.72em;
+    font-weight: 600;
+    color: rgba(255,255,255,0.35);
+    text-transform: uppercase;
+}
+
+.reminder-title {
+    font-size: 0.85em;
+    color: rgba(255,255,255,0.55);
+}
+
+/* ── Task List View (All Tasks) ─────────────────────────────── */
+
+.task-row {
+    padding: 10px 14px;
+}
+
+.task-title {
+    font-weight: 600;
+    font-size: 1.0em;
+}
+
+.task-subtitle {
+    font-size: 0.85em;
+}
+
+.task-completed .task-title {
+    text-decoration: line-through;
+    opacity: 0.4;
+}
+.task-completed .task-subtitle {
+    opacity: 0.3;
+}
+
+.due-badge {
+    font-size: 0.78em;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: rgba(68,136,255,0.12);
+    color: #6ea8ff;
+}
+
+.overdue {
+    background: rgba(224,64,64,0.12);
+    color: #e04040;
+}
+
+.due-today {
+    background: rgba(232,136,0,0.12);
+    color: #e88800;
+}
 
 .task-actions button {
-    opacity: 0.4;
+    opacity: 0.3;
     transition: opacity 150ms ease;
 }
 .task-actions button:hover {
     opacity: 1.0;
 }
-.task-actions .delete-btn:hover {
-    color: #e01b24;
+.delete-btn:hover {
+    color: #e04040;
 }
 
-/* ── Empty State ────────────────────────────────────────────── */
+/* ── Theme Toggle ───────────────────────────────────────────── */
 
-.empty-state {
-    opacity: 0.65;
+.theme-btn {
+    min-width: 40px;
+    min-height: 30px;
+    border-radius: 8px;
+    padding: 4px 8px;
+    font-size: 0.8em;
+    font-weight: 600;
 }
 
 /* ── Add Task Button ────────────────────────────────────────── */
@@ -140,23 +323,16 @@
     font-weight: 700;
 }
 
-/* ── Appearance Section ─────────────────────────────────────── */
+/* ── Empty State ────────────────────────────────────────────── */
 
-.theme-selector {
-    margin-top: 4px;
-    margin-bottom: 4px;
+.empty-state {
+    opacity: 0.5;
 }
 
-.theme-btn {
-    min-width: 44px;
-    min-height: 34px;
-    border-radius: 8px;
-    padding: 4px 10px;
-    font-size: 0.85em;
-    font-weight: 600;
-}
+/* ── Header ─────────────────────────────────────────────────── */
 
-.theme-btn-active {
-    background: @accent_bg_color;
-    color: @accent_fg_color;
+.app-title {
+    font-weight: 800;
+    font-size: 1.05em;
+    letter-spacing: 0.5px;
 }
