@@ -1,0 +1,52 @@
+/* Completed task styling */
+.task-completed .task-title {
+    text-decoration: line-through;
+    opacity: 0.5;
+}
+.task-completed .task-subtitle {
+    opacity: 0.4;
+}
+
+/* Priority indicators */
+.priority-high {
+    color: #e01b24;
+    font-weight: bold;
+}
+.priority-medium {
+    color: #ff7800;
+    font-weight: bold;
+}
+.priority-low {
+    color: #33d17a;
+    font-weight: bold;
+}
+
+/* Overdue date */
+.overdue {
+    color: #e01b24;
+    font-weight: 600;
+}
+
+/* Sidebar category row */
+.sidebar-row {
+    padding: 6px 12px;
+}
+
+/* Category color dot */
+.category-dot {
+    min-width: 12px;
+    min-height: 12px;
+    border-radius: 6px;
+}
+
+/* Task count badge */
+.task-count {
+    font-size: 0.85em;
+    opacity: 0.6;
+    min-width: 24px;
+}
+
+/* Empty state page */
+.empty-state {
+    opacity: 0.7;
+}
