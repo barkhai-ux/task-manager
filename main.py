@@ -43,6 +43,12 @@ def _hex(color):
     return int(color[1:3], 16) / 255, int(color[3:5], 16) / 255, int(color[5:7], 16) / 255
 
 
+def _fg():
+    """Return foreground (r, g, b) based on current theme."""
+    dark = Adw.StyleManager.get_default().get_dark()
+    return (1, 1, 1) if dark else (0, 0, 0)
+
+
 def draw_dot(area, cr, w, h):
     r, g, b = _hex(area._color)
     cr.set_source_rgb(r, g, b)
@@ -67,11 +73,12 @@ def draw_color_bar(area, cr, w, h):
 
 def draw_progress_ring(area, cr, w, h):
     pct = area._pct
+    fg = _fg()
     cx, cy = w / 2, h / 2
     radius = min(cx, cy) - 8
     lw = 10
     # Background ring
-    cr.set_source_rgba(1, 1, 1, 0.06)
+    cr.set_source_rgba(*fg, 0.08)
     cr.set_line_width(lw)
     cr.arc(cx, cy, radius, 0, 2 * math.pi)
     cr.stroke()
@@ -85,7 +92,7 @@ def draw_progress_ring(area, cr, w, h):
         cr.arc(cx, cy, radius, start, end)
         cr.stroke()
     # Center text
-    cr.set_source_rgb(1, 1, 1)
+    cr.set_source_rgba(*fg, 0.9)
     cr.select_font_face("Sans", 0, 1)
     cr.set_font_size(26)
     text = f"{pct}%"
@@ -95,6 +102,7 @@ def draw_progress_ring(area, cr, w, h):
 
 
 def draw_bar_chart(area, cr, w, h):
+    fg = _fg()
     data = area._data
     days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     vals = [data.get(d, 0) for d in days]
@@ -108,7 +116,7 @@ def draw_bar_chart(area, cr, w, h):
     for i, (d, v) in enumerate(zip(days, vals)):
         x = i * sw + (sw - bw) / 2
         # Bg slot
-        cr.set_source_rgba(1, 1, 1, 0.03)
+        cr.set_source_rgba(*fg, 0.04)
         cr.rectangle(x, 0, bw, ch)
         cr.fill()
         # Bar
@@ -125,7 +133,7 @@ def draw_bar_chart(area, cr, w, h):
             cr.close_path()
             cr.fill()
         # Label
-        cr.set_source_rgba(1, 1, 1, 0.3)
+        cr.set_source_rgba(*fg, 0.35)
         cr.select_font_face("Sans", 0, 0)
         cr.set_font_size(8)
         ext = cr.text_extents(d)
@@ -134,6 +142,7 @@ def draw_bar_chart(area, cr, w, h):
 
 
 def draw_donut(area, cr, w, h):
+    fg = _fg()
     data = area._data  # [(name, color, count), ...]
     total = sum(d[2] for d in data)
     cx, cy = w / 2, h / 2
@@ -142,7 +151,7 @@ def draw_donut(area, cr, w, h):
     gap = 0.03
 
     if total == 0:
-        cr.set_source_rgba(1, 1, 1, 0.06)
+        cr.set_source_rgba(*fg, 0.08)
         cr.set_line_width(outer - inner)
         cr.arc(cx, cy, (outer + inner) / 2, 0, 2 * math.pi)
         cr.stroke()
@@ -164,7 +173,7 @@ def draw_donut(area, cr, w, h):
             angle += sweep + gap
 
     # Center text
-    cr.set_source_rgb(1, 1, 1)
+    cr.set_source_rgba(*fg, 0.9)
     cr.select_font_face("Sans", 0, 1)
     cr.set_font_size(20)
     t = str(total)
@@ -172,7 +181,7 @@ def draw_donut(area, cr, w, h):
     cr.move_to(cx - ext.width / 2, cy + 3)
     cr.show_text(t)
     cr.set_font_size(8)
-    cr.set_source_rgba(1, 1, 1, 0.4)
+    cr.set_source_rgba(*fg, 0.45)
     t2 = "tasks"
     ext2 = cr.text_extents(t2)
     cr.move_to(cx - ext2.width / 2, cy + 16)
@@ -282,7 +291,7 @@ class TaskManagerWindow(Adw.ApplicationWindow):
         self.refresh_all()
 
     def _load_theme(self):
-        saved = self.db.get_setting("color_scheme", "force_dark")
+        saved = self.db.get_setting("color_scheme", "default")
         idx = SCHEME_STR.index(saved) if saved in SCHEME_STR else 2
         Adw.StyleManager.get_default().set_color_scheme(SCHEME_VALUES[idx])
         self._theme_loading = True
@@ -907,6 +916,8 @@ class TaskManagerWindow(Adw.ApplicationWindow):
         self._theme_loading = False
         Adw.StyleManager.get_default().set_color_scheme(SCHEME_VALUES[idx])
         self.db.set_setting("color_scheme", SCHEME_STR[idx])
+        # Redraw charts with updated foreground colors
+        self.refresh_all()
 
     # ── Task CRUD ───────────────────────────────────────────────
 
@@ -1019,7 +1030,7 @@ class TaskManagerApp(Adw.Application):
         Adw.Application.do_startup(self)
         # Apply theme early
         db = Database()
-        saved = db.get_setting("color_scheme", "force_dark")
+        saved = db.get_setting("color_scheme", "default")
         idx = SCHEME_STR.index(saved) if saved in SCHEME_STR else 2
         Adw.StyleManager.get_default().set_color_scheme(SCHEME_VALUES[idx])
         # CSS
