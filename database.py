@@ -1,6 +1,6 @@
 import os
 import sqlite3
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 from models import Category, Task
@@ -24,6 +24,11 @@ CREATE TABLE IF NOT EXISTS tasks (
     created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
     completed_at TEXT DEFAULT NULL,
     FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
 );
 """
 
@@ -193,3 +198,96 @@ class Database:
         ).fetchone()[0]
         counts["all"] = total
         return counts
+
+    # ── Settings ────────────────────────────────────────────────
+
+    def get_setting(self, key: str, default: str = "") -> str:
+        row = self.conn.execute(
+            "SELECT value FROM app_settings WHERE key=?", (key,)
+        ).fetchone()
+        return row[0] if row else default
+
+    def set_setting(self, key: str, value: str):
+        self.conn.execute(
+            "INSERT INTO app_settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value),
+        )
+        self.conn.commit()
+
+    # ── Stats & Dashboard Queries ───────────────────────────────
+
+    def get_completion_rate(self) -> tuple:
+        total = self.conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+        completed = self.conn.execute(
+            "SELECT COUNT(*) FROM tasks WHERE completed = 1"
+        ).fetchone()[0]
+        return completed, total
+
+    def get_weekly_completions(self) -> dict:
+        today = date.today()
+        monday = today - timedelta(days=today.weekday())
+        result = {}
+        for i in range(7):
+            d = monday + timedelta(days=i)
+            count = self.conn.execute(
+                "SELECT COUNT(*) FROM tasks WHERE date(completed_at) = ?",
+                (d.isoformat(),),
+            ).fetchone()[0]
+            result[d.strftime("%a")] = count
+        return result
+
+    def get_category_stats(self) -> list:
+        rows = self.conn.execute(
+            """SELECT COALESCE(c.name, 'Uncategorized'),
+                      COALESCE(c.color, '#888888'),
+                      COUNT(t.id)
+               FROM tasks t
+               LEFT JOIN categories c ON t.category_id = c.id
+               WHERE t.completed = 0
+               GROUP BY t.category_id
+               ORDER BY COUNT(t.id) DESC"""
+        ).fetchall()
+        return [(r[0], r[1], r[2]) for r in rows]
+
+    def get_reminders(self, limit: int = 5) -> list[Task]:
+        today_str = date.today().isoformat()
+        rows = self.conn.execute(
+            """SELECT id, title, notes, completed, priority, due_date,
+                      category_id, created_at, completed_at
+               FROM tasks
+               WHERE completed = 0 AND due_date IS NOT NULL AND due_date >= ?
+               ORDER BY due_date ASC, priority DESC
+               LIMIT ?""",
+            (today_str, limit),
+        ).fetchall()
+        return [
+            Task(id=r[0], title=r[1], notes=r[2], completed=bool(r[3]),
+                 priority=r[4], due_date=r[5], category_id=r[6],
+                 created_at=r[7], completed_at=r[8])
+            for r in rows
+        ]
+
+    def get_week_tasks(self) -> list:
+        today = date.today()
+        monday = today - timedelta(days=today.weekday())
+        result = []
+        for i in range(7):
+            d = monday + timedelta(days=i)
+            d_str = d.isoformat()
+            label = f"{d.strftime('%a').upper()} {d.day}"
+            rows = self.conn.execute(
+                """SELECT id, title, notes, completed, priority, due_date,
+                          category_id, created_at, completed_at
+                   FROM tasks WHERE due_date = ?
+                   ORDER BY completed ASC, priority DESC""",
+                (d_str,),
+            ).fetchall()
+            tasks = [
+                Task(id=r[0], title=r[1], notes=r[2], completed=bool(r[3]),
+                     priority=r[4], due_date=r[5], category_id=r[6],
+                     created_at=r[7], completed_at=r[8])
+                for r in rows
+            ]
+            result.append((label, d_str, tasks))
+        return result
