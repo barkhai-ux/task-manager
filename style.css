@@ -289,6 +289,25 @@
     font-weight: 700;
 }
 
+/* ── Zoom Label ────────────────────────────────────────────── */
+
+.zoom-label {
+    font-size: 0.82em;
+    font-weight: 700;
+    min-width: 40px;
+    color: alpha(@window_fg_color, 0.55);
+}
+
+/* ── View Toolbar ──────────────────────────────────────────── */
+
+.view-toolbar {
+    border-bottom: 1px solid alpha(@window_fg_color, 0.08);
+}
+
+.view-toolbar button {
+    min-height: 28px;
+}
+
 /* ── Empty State ────────────────────────────────────────────── */
 
 .empty-state {

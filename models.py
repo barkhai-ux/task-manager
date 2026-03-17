@@ -56,5 +56,5 @@ class MindMapNode:
     parent_id: Optional[int] = None
     text: str = "New Idea"
     color: str = "#4488ff"
-    pos_x: float = 0.0
-    pos_y: float = 0.0
+    pos_x: Optional[float] = None
+    pos_y: Optional[float] = None

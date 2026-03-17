@@ -87,6 +87,19 @@ class Database:
         self.conn.execute("PRAGMA foreign_keys=ON")
         self.conn.executescript(SCHEMA_SQL)
         self.conn.commit()
+        self._migrate()
+
+    def _migrate(self):
+        """Add pos_x/pos_y columns to mindmap_nodes if missing."""
+        try:
+            self.conn.execute("ALTER TABLE mindmap_nodes ADD COLUMN pos_x REAL")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            self.conn.execute("ALTER TABLE mindmap_nodes ADD COLUMN pos_y REAL")
+        except sqlite3.OperationalError:
+            pass
+        self.conn.commit()
 
     # ── Categories ──────────────────────────────────────────────
 
@@ -416,17 +429,39 @@ class Database:
 
     def add_node(self, node: MindMapNode) -> int:
         cur = self.conn.execute(
-            "INSERT INTO mindmap_nodes (mindmap_id, parent_id, text, color) VALUES (?, ?, ?, ?)",
-            (node.mindmap_id, node.parent_id, node.text, node.color),
+            "INSERT INTO mindmap_nodes (mindmap_id, parent_id, text, color, pos_x, pos_y) VALUES (?, ?, ?, ?, ?, ?)",
+            (node.mindmap_id, node.parent_id, node.text, node.color, node.pos_x, node.pos_y),
         )
         self.conn.commit()
         return cur.lastrowid
 
     def update_node(self, node: MindMapNode):
         self.conn.execute(
-            "UPDATE mindmap_nodes SET text=?, color=? WHERE id=?",
-            (node.text, node.color, node.id),
+            "UPDATE mindmap_nodes SET text=?, color=?, pos_x=?, pos_y=? WHERE id=?",
+            (node.text, node.color, node.pos_x, node.pos_y, node.id),
         )
+        self.conn.commit()
+
+    def update_node_position(self, node_id: int, pos_x: float, pos_y: float):
+        self.conn.execute(
+            "UPDATE mindmap_nodes SET pos_x=?, pos_y=? WHERE id=?",
+            (pos_x, pos_y, node_id),
+        )
+        self.conn.commit()
+
+    def reset_node_positions(self, mindmap_id: int):
+        self.conn.execute(
+            "UPDATE mindmap_nodes SET pos_x=NULL, pos_y=NULL WHERE mindmap_id=?",
+            (mindmap_id,),
+        )
+        self.conn.commit()
+
+    def reorder_phases(self, phase_order: list[int]):
+        for pos, phase_id in enumerate(phase_order):
+            self.conn.execute(
+                "UPDATE project_phases SET position=? WHERE id=?",
+                (pos, phase_id),
+            )
         self.conn.commit()
 
     def delete_node(self, node_id: int):
@@ -440,8 +475,8 @@ class Database:
 
     def get_nodes(self, mindmap_id: int) -> list[MindMapNode]:
         rows = self.conn.execute(
-            "SELECT id, mindmap_id, parent_id, text, color FROM mindmap_nodes WHERE mindmap_id=?",
+            "SELECT id, mindmap_id, parent_id, text, color, pos_x, pos_y FROM mindmap_nodes WHERE mindmap_id=?",
             (mindmap_id,),
         ).fetchall()
         return [MindMapNode(id=r[0], mindmap_id=r[1], parent_id=r[2],
-                            text=r[3], color=r[4]) for r in rows]
+                            text=r[3], color=r[4], pos_x=r[5], pos_y=r[6]) for r in rows]

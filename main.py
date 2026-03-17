@@ -770,7 +770,7 @@ class TaskManagerWindow(Adw.ApplicationWindow):
         card.add_css_class("dashboard-card")
 
         hdr = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        hdr.append(Gtk.Label(label="Projects", xalign=0, hexpand=True, css_classes=["card-title"]))
+        hdr.append(Gtk.Label(label="Categories", xalign=0, hexpand=True, css_classes=["card-title"]))
         card.append(hdr)
 
         stats = self.db.get_category_stats()
