@@ -13,8 +13,10 @@ gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw, Gio, Gdk, Pango
 
 from database import Database
-from models import Task, Category
-from dialogs import TaskDialog, CategoryDialog
+from models import Task, Category, Project, MindMap
+from dialogs import TaskDialog, CategoryDialog, ProjectDialog, MindMapDialog
+from waterfall import WaterfallView
+from mindmap import MindMapView
 
 # ── Constants ───────────────────────────────────────────────────
 
@@ -340,11 +342,18 @@ class TaskManagerWindow(Adw.ApplicationWindow):
         columns.append(self._build_sidebar())
         columns.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
 
-        # 2. Content stack (dashboard / task list)
+        # 2. Content stack (dashboard / task list / waterfall / mindmap)
         self.content_stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE,
                                        hexpand=True)
         self.content_stack.add_named(self._build_dashboard(), "dashboard")
         self.content_stack.add_named(self._build_task_list(), "tasks")
+
+        self.waterfall_view = WaterfallView(self.db, on_change=self.refresh_sidebar)
+        self.content_stack.add_named(self.waterfall_view, "waterfall")
+
+        self.mindmap_view = MindMapView(self.db, on_change=self.refresh_sidebar)
+        self.content_stack.add_named(self.mindmap_view, "mindmap")
+
         columns.append(self.content_stack)
 
         # 3. Stats panel
@@ -405,6 +414,48 @@ class TaskManagerWindow(Adw.ApplicationWindow):
         sep2 = Gtk.Separator(margin_top=10, margin_bottom=6)
         sep2.add_css_class("sidebar-separator")
         inner.append(sep2)
+
+        # Projects
+        ph = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4,
+                     margin_start=16, margin_end=8, margin_bottom=4)
+        pl = Gtk.Label(label="PROJECTS", xalign=0, hexpand=True)
+        pl.add_css_class("sidebar-section-title")
+        ph.append(pl)
+        pab = Gtk.Button(icon_name="list-add-symbolic", tooltip_text="Add project")
+        pab.add_css_class("flat")
+        pab.connect("clicked", self._on_add_project)
+        ph.append(pab)
+        inner.append(ph)
+
+        self.proj_listbox = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
+        self.proj_listbox.add_css_class("navigation-sidebar")
+        self.proj_listbox.connect("row-selected", self._on_proj_selected)
+        inner.append(self.proj_listbox)
+
+        sep3 = Gtk.Separator(margin_top=10, margin_bottom=6)
+        sep3.add_css_class("sidebar-separator")
+        inner.append(sep3)
+
+        # Mind Maps
+        mh = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4,
+                     margin_start=16, margin_end=8, margin_bottom=4)
+        ml = Gtk.Label(label="MIND MAPS", xalign=0, hexpand=True)
+        ml.add_css_class("sidebar-section-title")
+        mh.append(ml)
+        mab = Gtk.Button(icon_name="list-add-symbolic", tooltip_text="Add mind map")
+        mab.add_css_class("flat")
+        mab.connect("clicked", self._on_add_mindmap)
+        mh.append(mab)
+        inner.append(mh)
+
+        self.mm_listbox = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
+        self.mm_listbox.add_css_class("navigation-sidebar")
+        self.mm_listbox.connect("row-selected", self._on_mm_selected)
+        inner.append(self.mm_listbox)
+
+        sep4 = Gtk.Separator(margin_top=10, margin_bottom=6)
+        sep4.add_css_class("sidebar-separator")
+        inner.append(sep4)
 
         # Theme
         tl = Gtk.Label(label="APPEARANCE", xalign=0, margin_start=16, margin_bottom=6)
@@ -819,6 +870,8 @@ class TaskManagerWindow(Adw.ApplicationWindow):
 
     def refresh_sidebar(self):
         _clear(self.cat_listbox)
+        _clear(self.proj_listbox)
+        _clear(self.mm_listbox)
         cats = self.db.get_categories()
         counts = self.db.get_task_counts()
         self._cat_colors = {c.id: c.color for c in cats}
@@ -846,6 +899,36 @@ class TaskManagerWindow(Adw.ApplicationWindow):
             g.connect("pressed", self._on_cat_rclick, cat)
             row.add_controller(g)
             self.cat_listbox.append(row)
+
+        # Projects
+        for proj in self.db.get_projects():
+            row = Gtk.ListBoxRow()
+            row.project_id = proj.id
+            row.project_name = proj.name
+            hb = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10,
+                         margin_start=10, margin_end=10, margin_top=5, margin_bottom=5)
+            hb.append(Gtk.Image(icon_name="view-paged-symbolic"))
+            hb.append(Gtk.Label(label=proj.name, xalign=0, hexpand=True))
+            row.set_child(hb)
+            g = Gtk.GestureClick(button=3)
+            g.connect("pressed", self._on_proj_rclick, proj)
+            row.add_controller(g)
+            self.proj_listbox.append(row)
+
+        # Mind Maps
+        for mm in self.db.get_mindmaps():
+            row = Gtk.ListBoxRow()
+            row.mindmap_id = mm.id
+            row.mindmap_name = mm.name
+            hb = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10,
+                         margin_start=10, margin_end=10, margin_top=5, margin_bottom=5)
+            hb.append(Gtk.Image(icon_name="network-workgroup-symbolic"))
+            hb.append(Gtk.Label(label=mm.name, xalign=0, hexpand=True))
+            row.set_child(hb)
+            g = Gtk.GestureClick(button=3)
+            g.connect("pressed", self._on_mm_rclick, mm)
+            row.add_controller(g)
+            self.mm_listbox.append(row)
 
         # Update nav counts
         all_c = counts.get("all", 0)
@@ -875,6 +958,8 @@ class TaskManagerWindow(Adw.ApplicationWindow):
         if row is None:
             return
         self.cat_listbox.select_row(None)
+        self.proj_listbox.select_row(None)
+        self.mm_listbox.select_row(None)
         self.current_filter = row.filter_id
         self.current_category_id = None
         if self.current_filter == FILTER_DASHBOARD:
@@ -888,6 +973,8 @@ class TaskManagerWindow(Adw.ApplicationWindow):
         if row is None:
             return
         self.nav_listbox.select_row(None)
+        self.proj_listbox.select_row(None)
+        self.mm_listbox.select_row(None)
         self.current_filter = "category"
         self.current_category_id = row.category_id
         self.content_stack.set_visible_child_name("tasks")
@@ -989,6 +1076,120 @@ class TaskManagerWindow(Adw.ApplicationWindow):
                 self.db.delete_category(cat.id)
                 self.current_filter = FILTER_DASHBOARD
                 self.current_category_id = None
+                self.nav_listbox.select_row(self.nav_listbox.get_row_at_index(0))
+                self.refresh_all()
+
+        d.connect("response", on_resp)
+        d.present()
+
+    # ── Project CRUD ──────────────────────────────────────────────
+
+    def _on_add_project(self, _btn):
+        dlg = ProjectDialog(self)
+        dlg.set_callback(lambda p: (self.db.add_project(p), self.refresh_all()))
+        dlg.present()
+
+    def _on_proj_selected(self, lb, row):
+        if row is None:
+            return
+        self.nav_listbox.select_row(None)
+        self.cat_listbox.select_row(None)
+        self.mm_listbox.select_row(None)
+        self.current_filter = "project"
+        self.waterfall_view.load(row.project_id, row.project_name)
+        self.content_stack.set_visible_child_name("waterfall")
+
+    def _on_proj_rclick(self, gesture, _n, x, y, proj):
+        menu = Gio.Menu()
+        menu.append("Edit", f"proj.edit-{proj.id}")
+        menu.append("Delete", f"proj.delete-{proj.id}")
+        ag = Gio.SimpleActionGroup()
+        ea = Gio.SimpleAction(name=f"edit-{proj.id}")
+        ea.connect("activate", lambda *_: self._edit_proj(proj))
+        ag.add_action(ea)
+        da = Gio.SimpleAction(name=f"delete-{proj.id}")
+        da.connect("activate", lambda *_: self._del_proj(proj))
+        ag.add_action(da)
+        row = gesture.get_widget()
+        row.insert_action_group("proj", ag)
+        p = Gtk.PopoverMenu(menu_model=menu, has_arrow=True)
+        p.set_parent(row)
+        p.popup()
+
+    def _edit_proj(self, proj):
+        dlg = ProjectDialog(self, project=proj)
+        dlg.set_callback(lambda p: (self.db.update_project(p), self.refresh_all()))
+        dlg.present()
+
+    def _del_proj(self, proj):
+        d = Adw.MessageDialog(heading="Delete Project?",
+                              body=f'Delete "{proj.name}" and all its phases?',
+                              transient_for=self)
+        d.add_response("cancel", "Cancel")
+        d.add_response("delete", "Delete")
+        d.set_response_appearance("delete", Adw.ResponseAppearance.DESTRUCTIVE)
+
+        def on_resp(_, r):
+            if r == "delete":
+                self.db.delete_project(proj.id)
+                self.current_filter = FILTER_DASHBOARD
+                self.nav_listbox.select_row(self.nav_listbox.get_row_at_index(0))
+                self.refresh_all()
+
+        d.connect("response", on_resp)
+        d.present()
+
+    # ── Mind Map CRUD ──────────────────────────────────────────
+
+    def _on_add_mindmap(self, _btn):
+        dlg = MindMapDialog(self)
+        dlg.set_callback(lambda mm: (self.db.add_mindmap(mm), self.refresh_all()))
+        dlg.present()
+
+    def _on_mm_selected(self, lb, row):
+        if row is None:
+            return
+        self.nav_listbox.select_row(None)
+        self.cat_listbox.select_row(None)
+        self.proj_listbox.select_row(None)
+        self.current_filter = "mindmap"
+        self.mindmap_view.load(row.mindmap_id, row.mindmap_name)
+        self.content_stack.set_visible_child_name("mindmap")
+
+    def _on_mm_rclick(self, gesture, _n, x, y, mm):
+        menu = Gio.Menu()
+        menu.append("Edit", f"mm.edit-{mm.id}")
+        menu.append("Delete", f"mm.delete-{mm.id}")
+        ag = Gio.SimpleActionGroup()
+        ea = Gio.SimpleAction(name=f"edit-{mm.id}")
+        ea.connect("activate", lambda *_: self._edit_mm(mm))
+        ag.add_action(ea)
+        da = Gio.SimpleAction(name=f"delete-{mm.id}")
+        da.connect("activate", lambda *_: self._del_mm(mm))
+        ag.add_action(da)
+        row = gesture.get_widget()
+        row.insert_action_group("mm", ag)
+        p = Gtk.PopoverMenu(menu_model=menu, has_arrow=True)
+        p.set_parent(row)
+        p.popup()
+
+    def _edit_mm(self, mm):
+        dlg = MindMapDialog(self, mindmap=mm)
+        dlg.set_callback(lambda m: (self.db.update_mindmap(m), self.refresh_all()))
+        dlg.present()
+
+    def _del_mm(self, mm):
+        d = Adw.MessageDialog(heading="Delete Mind Map?",
+                              body=f'Delete "{mm.name}" and all its nodes?',
+                              transient_for=self)
+        d.add_response("cancel", "Cancel")
+        d.add_response("delete", "Delete")
+        d.set_response_appearance("delete", Adw.ResponseAppearance.DESTRUCTIVE)
+
+        def on_resp(_, r):
+            if r == "delete":
+                self.db.delete_mindmap(mm.id)
+                self.current_filter = FILTER_DASHBOARD
                 self.nav_listbox.select_row(self.nav_listbox.get_row_at_index(0))
                 self.refresh_all()
 

@@ -3,7 +3,7 @@ import sqlite3
 from datetime import date, datetime, timedelta
 from typing import Optional
 
-from models import Category, Task
+from models import Category, Task, Project, Phase, MindMap, MindMapNode
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS categories (
@@ -29,6 +29,39 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE TABLE IF NOT EXISTS app_settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS projects (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS project_phases (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    start_date TEXT NOT NULL,
+    end_date TEXT NOT NULL,
+    status INTEGER NOT NULL DEFAULT 0,
+    position INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS mindmaps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS mindmap_nodes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    mindmap_id INTEGER NOT NULL,
+    parent_id INTEGER DEFAULT NULL,
+    text TEXT NOT NULL DEFAULT 'New Idea',
+    color TEXT DEFAULT '#4488ff',
+    FOREIGN KEY (mindmap_id) REFERENCES mindmaps(id) ON DELETE CASCADE
 );
 """
 
@@ -291,3 +324,124 @@ class Database:
             ]
             result.append((label, d_str, tasks))
         return result
+
+    # ── Projects ────────────────────────────────────────────────
+
+    def add_project(self, project: Project) -> int:
+        cur = self.conn.execute(
+            "INSERT INTO projects (name, description) VALUES (?, ?)",
+            (project.name, project.description),
+        )
+        self.conn.commit()
+        return cur.lastrowid
+
+    def update_project(self, project: Project):
+        self.conn.execute(
+            "UPDATE projects SET name=?, description=? WHERE id=?",
+            (project.name, project.description, project.id),
+        )
+        self.conn.commit()
+
+    def delete_project(self, project_id: int):
+        self.conn.execute("DELETE FROM projects WHERE id=?", (project_id,))
+        self.conn.commit()
+
+    def get_projects(self) -> list[Project]:
+        rows = self.conn.execute(
+            "SELECT id, name, description, created_at FROM projects ORDER BY name"
+        ).fetchall()
+        return [Project(id=r[0], name=r[1], description=r[2], created_at=r[3]) for r in rows]
+
+    # ── Phases ──────────────────────────────────────────────────
+
+    def add_phase(self, phase: Phase) -> int:
+        cur = self.conn.execute(
+            """INSERT INTO project_phases (project_id, name, start_date, end_date, status, position)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (phase.project_id, phase.name, phase.start_date, phase.end_date,
+             phase.status, phase.position),
+        )
+        self.conn.commit()
+        return cur.lastrowid
+
+    def update_phase(self, phase: Phase):
+        self.conn.execute(
+            """UPDATE project_phases SET name=?, start_date=?, end_date=?, status=?, position=?
+               WHERE id=?""",
+            (phase.name, phase.start_date, phase.end_date, phase.status, phase.position, phase.id),
+        )
+        self.conn.commit()
+
+    def delete_phase(self, phase_id: int):
+        self.conn.execute("DELETE FROM project_phases WHERE id=?", (phase_id,))
+        self.conn.commit()
+
+    def get_phases(self, project_id: int) -> list[Phase]:
+        rows = self.conn.execute(
+            """SELECT id, project_id, name, start_date, end_date, status, position
+               FROM project_phases WHERE project_id=? ORDER BY position, start_date""",
+            (project_id,),
+        ).fetchall()
+        return [Phase(id=r[0], project_id=r[1], name=r[2], start_date=r[3],
+                      end_date=r[4], status=r[5], position=r[6]) for r in rows]
+
+    # ── Mind Maps ───────────────────────────────────────────────
+
+    def add_mindmap(self, mm: MindMap) -> int:
+        cur = self.conn.execute("INSERT INTO mindmaps (name) VALUES (?)", (mm.name,))
+        self.conn.commit()
+        mm_id = cur.lastrowid
+        self.conn.execute(
+            "INSERT INTO mindmap_nodes (mindmap_id, parent_id, text, color) VALUES (?, NULL, ?, ?)",
+            (mm_id, mm.name, "#4488ff"),
+        )
+        self.conn.commit()
+        return mm_id
+
+    def update_mindmap(self, mm: MindMap):
+        self.conn.execute("UPDATE mindmaps SET name=? WHERE id=?", (mm.name, mm.id))
+        self.conn.commit()
+
+    def delete_mindmap(self, mm_id: int):
+        self.conn.execute("DELETE FROM mindmaps WHERE id=?", (mm_id,))
+        self.conn.commit()
+
+    def get_mindmaps(self) -> list[MindMap]:
+        rows = self.conn.execute(
+            "SELECT id, name, created_at FROM mindmaps ORDER BY name"
+        ).fetchall()
+        return [MindMap(id=r[0], name=r[1], created_at=r[2]) for r in rows]
+
+    # ── Mind Map Nodes ──────────────────────────────────────────
+
+    def add_node(self, node: MindMapNode) -> int:
+        cur = self.conn.execute(
+            "INSERT INTO mindmap_nodes (mindmap_id, parent_id, text, color) VALUES (?, ?, ?, ?)",
+            (node.mindmap_id, node.parent_id, node.text, node.color),
+        )
+        self.conn.commit()
+        return cur.lastrowid
+
+    def update_node(self, node: MindMapNode):
+        self.conn.execute(
+            "UPDATE mindmap_nodes SET text=?, color=? WHERE id=?",
+            (node.text, node.color, node.id),
+        )
+        self.conn.commit()
+
+    def delete_node(self, node_id: int):
+        children = self.conn.execute(
+            "SELECT id FROM mindmap_nodes WHERE parent_id=?", (node_id,)
+        ).fetchall()
+        for (child_id,) in children:
+            self.delete_node(child_id)
+        self.conn.execute("DELETE FROM mindmap_nodes WHERE id=?", (node_id,))
+        self.conn.commit()
+
+    def get_nodes(self, mindmap_id: int) -> list[MindMapNode]:
+        rows = self.conn.execute(
+            "SELECT id, mindmap_id, parent_id, text, color FROM mindmap_nodes WHERE mindmap_id=?",
+            (mindmap_id,),
+        ).fetchall()
+        return [MindMapNode(id=r[0], mindmap_id=r[1], parent_id=r[2],
+                            text=r[3], color=r[4]) for r in rows]
