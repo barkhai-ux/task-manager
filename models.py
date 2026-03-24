@@ -58,3 +58,4 @@ class MindMapNode:
     color: str = "#4488ff"
     pos_x: Optional[float] = None
     pos_y: Optional[float] = None
+    collapsed: bool = False

@@ -90,13 +90,19 @@ class Database:
         self._migrate()
 
     def _migrate(self):
-        """Add pos_x/pos_y columns to mindmap_nodes if missing."""
+        """Add pos_x/pos_y/collapsed columns to mindmap_nodes if missing."""
         try:
             self.conn.execute("ALTER TABLE mindmap_nodes ADD COLUMN pos_x REAL")
         except sqlite3.OperationalError:
             pass
         try:
             self.conn.execute("ALTER TABLE mindmap_nodes ADD COLUMN pos_y REAL")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            self.conn.execute(
+                "ALTER TABLE mindmap_nodes ADD COLUMN collapsed INTEGER NOT NULL DEFAULT 0"
+            )
         except sqlite3.OperationalError:
             pass
         self.conn.commit()
@@ -437,8 +443,15 @@ class Database:
 
     def update_node(self, node: MindMapNode):
         self.conn.execute(
-            "UPDATE mindmap_nodes SET text=?, color=?, pos_x=?, pos_y=? WHERE id=?",
-            (node.text, node.color, node.pos_x, node.pos_y, node.id),
+            "UPDATE mindmap_nodes SET text=?, color=?, pos_x=?, pos_y=?, collapsed=? WHERE id=?",
+            (node.text, node.color, node.pos_x, node.pos_y, int(node.collapsed), node.id),
+        )
+        self.conn.commit()
+
+    def update_node_collapsed(self, node_id: int, collapsed: bool):
+        self.conn.execute(
+            "UPDATE mindmap_nodes SET collapsed=? WHERE id=?",
+            (int(collapsed), node_id),
         )
         self.conn.commit()
 
@@ -475,8 +488,9 @@ class Database:
 
     def get_nodes(self, mindmap_id: int) -> list[MindMapNode]:
         rows = self.conn.execute(
-            "SELECT id, mindmap_id, parent_id, text, color, pos_x, pos_y FROM mindmap_nodes WHERE mindmap_id=?",
+            "SELECT id, mindmap_id, parent_id, text, color, pos_x, pos_y, collapsed FROM mindmap_nodes WHERE mindmap_id=?",
             (mindmap_id,),
         ).fetchall()
         return [MindMapNode(id=r[0], mindmap_id=r[1], parent_id=r[2],
-                            text=r[3], color=r[4], pos_x=r[5], pos_y=r[6]) for r in rows]
+                            text=r[3], color=r[4], pos_x=r[5], pos_y=r[6],
+                            collapsed=bool(r[7])) for r in rows]

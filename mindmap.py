@@ -1,5 +1,6 @@
 #!/usr/bin/python3
-"""Mind map view with pan/zoom canvas, draggable nodes, and polished visuals."""
+"""Mind map view with pan/zoom canvas, draggable nodes, collapsible branches,
+right-click context menus, and smooth animations."""
 
 import math
 
@@ -7,7 +8,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, Adw, Gdk
+from gi.repository import Gtk, Adw, Gdk, Gio, GLib
 
 from database import Database
 from models import MindMapNode
@@ -31,6 +32,10 @@ def _fg():
 
 def _is_dark():
     return Adw.StyleManager.get_default().get_dark()
+
+
+def _ease_out_cubic(t):
+    return 1.0 - (1.0 - t) ** 3
 
 
 class MindMapView(Gtk.Box):
@@ -57,6 +62,25 @@ class MindMapView(Gtk.Box):
         self._panning = False
         self._pan_start_px = 0.0
         self._pan_start_py = 0.0
+
+        # Context menu state
+        self._context_popover = None
+        self._context_node = None
+
+        # Animation state
+        self._anim_active = False
+        self._anim_tick_id = None
+        self._anim_start_time = None
+        self._anim_duration = 0.0
+        self._anim_targets = {}
+        self._anim_origins = {}
+        self._zoom_target = None
+        self._zoom_origin = None
+        self._entry_anim_nodes = {}
+
+        # Hover transition state
+        self._hover_alpha = {}
+        self._hover_tick_id = None
 
         # ── Toolbar ──────────────────────────────────────────────
         tb = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6,
@@ -131,12 +155,16 @@ class MindMapView(Gtk.Box):
         drag1.connect("drag-end", self._on_drag_end)
         self.canvas.add_controller(drag1)
 
-        # Pan gesture (button 2 = middle, button 3 = right)
-        for btn in (2, 3):
-            pan_g = Gtk.GestureDrag(button=btn)
-            pan_g.connect("drag-begin", self._on_pan_begin)
-            pan_g.connect("drag-update", self._on_pan_update)
-            self.canvas.add_controller(pan_g)
+        # Pan gesture (button 2 = middle)
+        pan_g = Gtk.GestureDrag(button=2)
+        pan_g.connect("drag-begin", self._on_pan_begin)
+        pan_g.connect("drag-update", self._on_pan_update)
+        self.canvas.add_controller(pan_g)
+
+        # Right-click context menu (button 3)
+        rclick = Gtk.GestureClick(button=3)
+        rclick.connect("pressed", self._on_right_click)
+        self.canvas.add_controller(rclick)
 
         # Scroll to zoom
         scroll_ctrl = Gtk.EventControllerScroll(
@@ -159,12 +187,12 @@ class MindMapView(Gtk.Box):
         self.title_label.set_label(f"Mind Map: {name}")
         self.selected_id = None
         self._hover_id = None
+        self._hover_alpha.clear()
         self._refresh()
-        self._zoom_fit()
+        self._zoom_fit(animate=False)
 
     def _refresh(self):
         self.nodes = self.db.get_nodes(self.mindmap_id) if self.mindmap_id else []
-        # If all positions are None, run auto-layout and persist
         if self.nodes and all(n.pos_x is None for n in self.nodes):
             self._auto_layout()
             self._save_all_positions()
@@ -183,6 +211,44 @@ class MindMapView(Gtk.Box):
                 return n
         return None
 
+    # ── Collapse Helpers ─────────────────────────────────────────
+
+    def _build_children_map(self):
+        children = {}
+        for n in self.nodes:
+            children.setdefault(n.parent_id, []).append(n)
+        return children
+
+    def _hidden_ids(self):
+        children_map = self._build_children_map()
+        hidden = set()
+
+        def _mark_hidden(nid):
+            for child in children_map.get(nid, []):
+                hidden.add(child.id)
+                _mark_hidden(child.id)
+
+        for n in self.nodes:
+            if n.collapsed:
+                _mark_hidden(n.id)
+        return hidden
+
+    def _has_children(self, node_id):
+        return any(n.parent_id == node_id for n in self.nodes)
+
+    def _descendant_count(self, node_id):
+        children_map = self._build_children_map()
+        count = 0
+
+        def _count(nid):
+            nonlocal count
+            for child in children_map.get(nid, []):
+                count += 1
+                _count(child.id)
+
+        _count(node_id)
+        return count
+
     # ── Coordinate Helpers ───────────────────────────────────────
 
     def _screen_to_world(self, sx, sy):
@@ -197,14 +263,29 @@ class MindMapView(Gtk.Box):
 
     def _hit_test(self, wx, wy):
         """Return the node under world coords, or None."""
-        # Check in reverse so top-drawn nodes take priority
+        hidden = self._hidden_ids()
         for nd in reversed(self.nodes):
-            if nd.pos_x is None:
+            if nd.pos_x is None or nd.id in hidden:
                 continue
             is_root = nd.parent_id is None
-            nw = max(len(nd.text) * 9 + 36, 90 if is_root else 70)
-            nh = 44 if is_root else 36
+            nw, nh = self._node_size(nd)
             if (nd.pos_x - nw / 2 <= wx <= nd.pos_x + nw / 2 and
+                    nd.pos_y - nh / 2 <= wy <= nd.pos_y + nh / 2):
+                return nd
+        return None
+
+    def _collapse_toggle_hit(self, wx, wy):
+        """Return the node whose collapse toggle was clicked, or None."""
+        hidden = self._hidden_ids()
+        for nd in reversed(self.nodes):
+            if nd.pos_x is None or nd.id in hidden:
+                continue
+            if not self._has_children(nd.id):
+                continue
+            nw, nh = self._node_size(nd)
+            # Toggle zone: rightmost 22px of the node pill
+            toggle_left = nd.pos_x + nw / 2 - 22
+            if (toggle_left <= wx <= nd.pos_x + nw / 2 and
                     nd.pos_y - nh / 2 <= wy <= nd.pos_y + nh / 2):
                 return nd
         return None
@@ -215,14 +296,15 @@ class MindMapView(Gtk.Box):
         old_zoom = self._zoom
         self._zoom = max(MIN_ZOOM, min(MAX_ZOOM, self._zoom + delta))
         if cx is not None and cy is not None:
-            # Zoom toward cursor
             self._pan_x = cx - (cx - self._pan_x) * (self._zoom / old_zoom)
             self._pan_y = cy - (cy - self._pan_y) * (self._zoom / old_zoom)
         self.zoom_label.set_label(f"{int(self._zoom * 100)}%")
         self.canvas.queue_draw()
 
-    def _zoom_fit(self):
-        if not self.nodes or all(n.pos_x is None for n in self.nodes):
+    def _zoom_fit(self, animate=True):
+        hidden = self._hidden_ids()
+        visible = [n for n in self.nodes if n.pos_x is not None and n.id not in hidden]
+        if not visible:
             self._zoom = 1.0
             alloc = self.canvas.get_allocation()
             self._pan_x = alloc.width / 2 if alloc.width > 1 else 300
@@ -230,10 +312,8 @@ class MindMapView(Gtk.Box):
             self.zoom_label.set_label("100%")
             self.canvas.queue_draw()
             return
-        xs = [n.pos_x for n in self.nodes if n.pos_x is not None]
-        ys = [n.pos_y for n in self.nodes if n.pos_y is not None]
-        if not xs:
-            return
+        xs = [n.pos_x for n in visible]
+        ys = [n.pos_y for n in visible]
         mn_x, mx_x = min(xs) - 80, max(xs) + 80
         mn_y, mx_y = min(ys) - 50, max(ys) + 50
         alloc = self.canvas.get_allocation()
@@ -242,13 +322,118 @@ class MindMapView(Gtk.Box):
         margin = 60
         zx = (cw - margin) / max(mx_x - mn_x, 1)
         zy = (ch - margin) / max(mx_y - mn_y, 1)
-        self._zoom = max(MIN_ZOOM, min(MAX_ZOOM, min(zx, zy)))
+        target_zoom = max(MIN_ZOOM, min(MAX_ZOOM, min(zx, zy)))
         center_wx = (mn_x + mx_x) / 2
         center_wy = (mn_y + mx_y) / 2
-        self._pan_x = cw / 2 - center_wx * self._zoom
-        self._pan_y = ch / 2 - center_wy * self._zoom
-        self.zoom_label.set_label(f"{int(self._zoom * 100)}%")
+        target_pan_x = cw / 2 - center_wx * target_zoom
+        target_pan_y = ch / 2 - center_wy * target_zoom
+
+        if animate and alloc.width > 1:
+            self._zoom_origin = (self._zoom, self._pan_x, self._pan_y)
+            self._zoom_target = (target_zoom, target_pan_x, target_pan_y)
+            self._start_animation(duration=0.4)
+        else:
+            self._zoom = target_zoom
+            self._pan_x = target_pan_x
+            self._pan_y = target_pan_y
+            self.zoom_label.set_label(f"{int(self._zoom * 100)}%")
+            self.canvas.queue_draw()
+
+    # ── Animation ────────────────────────────────────────────────
+
+    def _start_animation(self, duration=0.35):
+        if self._anim_tick_id is not None:
+            GLib.source_remove(self._anim_tick_id)
+        self._anim_active = True
+        self._anim_start_time = GLib.get_monotonic_time() / 1_000_000.0
+        self._anim_duration = duration
+        self._anim_tick_id = GLib.timeout_add(16, self._anim_tick)
+
+    def _anim_tick(self):
+        now = GLib.get_monotonic_time() / 1_000_000.0
+        elapsed = now - self._anim_start_time
+        t = min(1.0, elapsed / self._anim_duration) if self._anim_duration > 0 else 1.0
+        eased = _ease_out_cubic(t)
+
+        # Interpolate node positions
+        if self._anim_targets:
+            node_map = {n.id: n for n in self.nodes}
+            for nid, (tx, ty) in self._anim_targets.items():
+                ox, oy = self._anim_origins.get(nid, (tx, ty))
+                node = node_map.get(nid)
+                if node:
+                    node.pos_x = ox + (tx - ox) * eased
+                    node.pos_y = oy + (ty - oy) * eased
+
+        # Interpolate zoom/pan
+        if self._zoom_target:
+            tz, tpx, tpy = self._zoom_target
+            oz, opx, opy = self._zoom_origin
+            self._zoom = oz + (tz - oz) * eased
+            self._pan_x = opx + (tpx - opx) * eased
+            self._pan_y = opy + (tpy - opy) * eased
+            self.zoom_label.set_label(f"{int(self._zoom * 100)}%")
+
+        # Interpolate entry animations
+        for nid in list(self._entry_anim_nodes):
+            self._entry_anim_nodes[nid] = min(1.0, self._entry_anim_nodes[nid] + 0.08)
+
         self.canvas.queue_draw()
+
+        if t >= 1.0:
+            self._finish_animation()
+            return False
+        return True
+
+    def _finish_animation(self):
+        if self._anim_targets:
+            node_map = {n.id: n for n in self.nodes}
+            for nid, (tx, ty) in self._anim_targets.items():
+                node = node_map.get(nid)
+                if node:
+                    node.pos_x = tx
+                    node.pos_y = ty
+            self._save_all_positions()
+        if self._zoom_target:
+            tz, tpx, tpy = self._zoom_target
+            self._zoom = tz
+            self._pan_x = tpx
+            self._pan_y = tpy
+            self.zoom_label.set_label(f"{int(self._zoom * 100)}%")
+
+        self._anim_active = False
+        self._anim_tick_id = None
+        self._anim_targets = {}
+        self._anim_origins = {}
+        self._zoom_target = None
+        self._zoom_origin = None
+        self._entry_anim_nodes = {}
+        self.canvas.queue_draw()
+
+    # ── Hover Transitions ────────────────────────────────────────
+
+    def _start_hover_tick(self):
+        if self._hover_tick_id:
+            return
+        self._hover_tick_id = GLib.timeout_add(16, self._hover_tick)
+
+    def _hover_tick(self):
+        changed = False
+        target_hover = self._hover_id
+        for n in self.nodes:
+            target = 1.0 if n.id == target_hover else 0.0
+            current = self._hover_alpha.get(n.id, 0.0)
+            if abs(current - target) > 0.01:
+                step = 0.12
+                new_val = current + step if target > current else current - step
+                new_val = max(0.0, min(1.0, new_val))
+                self._hover_alpha[n.id] = new_val
+                changed = True
+        if changed:
+            self.canvas.queue_draw()
+            return True
+        self._hover_tick_id = None
+        return False
 
     # ── Layout ───────────────────────────────────────────────────
 
@@ -256,9 +441,11 @@ class MindMapView(Gtk.Box):
         if not self.nodes:
             return
         children = {}
+        node_map = {}
         root = None
         for n in self.nodes:
             children.setdefault(n.parent_id, []).append(n)
+            node_map[n.id] = n
             if n.parent_id is None:
                 root = n
         if not root:
@@ -271,12 +458,17 @@ class MindMapView(Gtk.Box):
             self._propagate_color(kid, children)
 
         def count_leaves(nid):
+            nd = node_map.get(nid)
+            if nd and nd.collapsed:
+                return 1
             kids = children.get(nid, [])
             return sum(count_leaves(k.id) for k in kids) if kids else 1
 
         def layout_subtree(node, cx, cy, a_start, a_end, radius):
             node.pos_x = cx
             node.pos_y = cy
+            if node.collapsed:
+                return
             kids = children.get(node.id, [])
             if not kids:
                 return
@@ -337,7 +529,6 @@ class MindMapView(Gtk.Box):
                 cr.set_source_rgba(1, 1, 1, alpha)
             else:
                 cr.set_source_rgba(0, 0, 0, alpha)
-            # Calculate visible world bounds
             w0x, w0y = self._screen_to_world(0, 0)
             w1x, w1y = self._screen_to_world(w, h)
             start_x = int(w0x / grid) * grid
@@ -357,12 +548,13 @@ class MindMapView(Gtk.Box):
             cr.set_source_rgba(*fg, 0.35)
             cr.select_font_face("Sans", 0, 0)
             cr.set_font_size(14)
-            t = "Empty mind map — add a child node to get started"
+            t = "Empty mind map \u2014 add a child node to get started"
             ext = cr.text_extents(t)
             cr.move_to(w / 2 - ext.width / 2, h / 2)
             cr.show_text(t)
             return
 
+        hidden = self._hidden_ids()
         node_map = {n.id: n for n in nodes}
 
         # Apply canvas transform
@@ -370,53 +562,45 @@ class MindMapView(Gtk.Box):
         cr.translate(self._pan_x, self._pan_y)
         cr.scale(self._zoom, self._zoom)
 
-        # Draw connections
+        # Draw connections (tapered)
         for n in nodes:
+            if n.id in hidden:
+                continue
             if n.parent_id and n.parent_id in node_map and n.pos_x is not None:
                 p = node_map[n.parent_id]
-                if p.pos_x is None:
+                if p.pos_x is None or p.id in hidden:
                     continue
-                r, g, b = _hex(n.color)
-                # Thicker connections for shallower depth
                 depth = self._node_depth(n, node_map)
-                lw = max(1.0, 3.0 - depth * 0.5)
-                cr.set_source_rgba(r, g, b, 0.35)
-                cr.set_line_width(lw)
-                # Smooth bezier
-                dx = n.pos_x - p.pos_x
-                dy = n.pos_y - p.pos_y
-                cx1 = p.pos_x + dx * 0.4
-                cy1 = p.pos_y
-                cx2 = n.pos_x - dx * 0.4
-                cy2 = n.pos_y
-                cr.move_to(p.pos_x, p.pos_y)
-                cr.curve_to(cx1, cy1, cx2, cy2, n.pos_x, n.pos_y)
-                cr.stroke()
+                self._draw_tapered_connection(cr, p, n, depth)
 
-        # Draw nodes (shadows first for hovered/selected)
+        # Draw shadows for hovered/selected
         for n in nodes:
-            if n.pos_x is None:
+            if n.pos_x is None or n.id in hidden:
                 continue
-            is_hover = n.id == self._hover_id
+            hover_t = self._hover_alpha.get(n.id, 0.0)
             is_sel = n.id == self.selected_id
-            if is_hover or is_sel:
-                is_root = n.parent_id is None
+            if hover_t > 0.01 or is_sel:
                 nw, nh = self._node_size(n)
                 nx = n.pos_x - nw / 2
                 ny = n.pos_y - nh / 2
                 rad = nh / 2
-                # Shadow
-                cr.set_source_rgba(0, 0, 0, 0.15)
-                self._pill(cr, nx + 2, ny + 3, nw, nh, rad)
-                cr.fill()
+                strength = max(hover_t, 1.0 if is_sel else 0.0)
+                # Multi-layer soft shadow
+                for layer in range(3):
+                    offset = 2 + layer * 1.5
+                    a = (0.07 - layer * 0.018) * strength
+                    cr.set_source_rgba(0, 0, 0, a)
+                    self._pill(cr, nx + offset * 0.5, ny + offset, nw + layer, nh + layer, rad)
+                    cr.fill()
 
         # Draw node bodies
+        import cairo
         for n in nodes:
-            if n.pos_x is None:
+            if n.pos_x is None or n.id in hidden:
                 continue
             is_root = n.parent_id is None
             is_sel = n.id == self.selected_id
-            is_hover = n.id == self._hover_id
+            hover_t = self._hover_alpha.get(n.id, 0.0)
             r, g, b = _hex(n.color)
 
             nw, nh = self._node_size(n)
@@ -424,31 +608,48 @@ class MindMapView(Gtk.Box):
             ny = n.pos_y - nh / 2
             rad = nh / 2
 
+            # Entry animation
+            entry_p = self._entry_anim_nodes.get(n.id, 1.0)
+            entry_alpha = _ease_out_cubic(entry_p)
+            entry_scale = 0.5 + 0.5 * _ease_out_cubic(entry_p)
+            if entry_p < 1.0:
+                cr.save()
+                cr.translate(n.pos_x, n.pos_y)
+                cr.scale(entry_scale, entry_scale)
+                cr.translate(-n.pos_x, -n.pos_y)
+
             # Glow ring for selected
             if is_sel:
-                cr.set_source_rgba(r, g, b, 0.25)
+                cr.set_source_rgba(r, g, b, 0.25 * entry_alpha)
                 self._pill(cr, nx - 4, ny - 4, nw + 8, nh + 8, rad + 4)
                 cr.fill()
 
-            # Gradient fill
-            import cairo
+            # Three-stop gradient fill (interpolated by hover_t)
             pat = cairo.LinearGradient(nx, ny, nx, ny + nh)
             if is_sel:
-                pat.add_color_stop_rgba(0, r, g, b, 0.50)
-                pat.add_color_stop_rgba(1, r, g, b, 0.35)
-            elif is_hover:
-                pat.add_color_stop_rgba(0, r, g, b, 0.30)
-                pat.add_color_stop_rgba(1, r, g, b, 0.18)
+                pat.add_color_stop_rgba(0.0, r, g, b, 0.55 * entry_alpha)
+                pat.add_color_stop_rgba(0.5, r, g, b, 0.42 * entry_alpha)
+                pat.add_color_stop_rgba(1.0, r, g, b, 0.32 * entry_alpha)
             else:
-                pat.add_color_stop_rgba(0, r, g, b, 0.18)
-                pat.add_color_stop_rgba(1, r, g, b, 0.08)
+                # Interpolate between normal and hover
+                a_top = 0.18 + 0.17 * hover_t
+                a_mid = 0.11 + 0.14 * hover_t
+                a_bot = 0.08 + 0.10 * hover_t
+                pat.add_color_stop_rgba(0.0, r, g, b, a_top * entry_alpha)
+                pat.add_color_stop_rgba(0.5, r, g, b, a_mid * entry_alpha)
+                pat.add_color_stop_rgba(1.0, r, g, b, a_bot * entry_alpha)
             cr.set_source(pat)
             self._pill(cr, nx, ny, nw, nh, rad)
             cr.fill()
 
-            # Border
-            cr.set_source_rgba(r, g, b, 0.8 if is_sel else (0.5 if is_hover else 0.35))
-            cr.set_line_width(2.5 if is_sel else (2.0 if is_hover else 1.2))
+            # Border (interpolated)
+            border_a = 0.35 + 0.15 * hover_t
+            border_w = 1.2 + 0.8 * hover_t
+            if is_sel:
+                border_a = 0.8
+                border_w = 2.5
+            cr.set_source_rgba(r, g, b, border_a * entry_alpha)
+            cr.set_line_width(border_w)
             self._pill(cr, nx, ny, nw, nh, rad)
             cr.stroke()
 
@@ -456,16 +657,109 @@ class MindMapView(Gtk.Box):
             cr.select_font_face("Sans", 0, 1 if is_root else 0)
             cr.set_font_size(14 if is_root else 12)
             ext = cr.text_extents(n.text)
-            cr.set_source_rgba(*fg, 0.92)
-            cr.move_to(n.pos_x - ext.width / 2, n.pos_y + ext.height / 2 - 1)
+            # Offset text left if node has collapse indicator
+            text_offset = -9 if self._has_children(n.id) else 0
+            cr.set_source_rgba(*fg, 0.92 * entry_alpha)
+            cr.move_to(n.pos_x - ext.width / 2 + text_offset, n.pos_y + ext.height / 2 - 1)
             cr.show_text(n.text)
 
+            # Collapse indicator
+            if self._has_children(n.id):
+                self._draw_collapse_indicator(cr, n, nw, nh, fg, entry_alpha)
+
+            if entry_p < 1.0:
+                cr.restore()
+
         cr.restore()
+
+    def _draw_tapered_connection(self, cr, parent, child, depth):
+        r, g, b = _hex(child.color)
+        start_width = max(1.5, 4.0 - depth * 0.7)
+        end_width = max(0.5, start_width * 0.35)
+
+        px, py = parent.pos_x, parent.pos_y
+        cx, cy = child.pos_x, child.pos_y
+        dx = cx - px
+        dy = cy - py
+        cx1, cy1 = px + dx * 0.4, py
+        cx2, cy2 = cx - dx * 0.4, cy
+
+        steps = 16
+        points_top = []
+        points_bot = []
+        for i in range(steps + 1):
+            t = i / steps
+            mt = 1 - t
+            bx = mt**3 * px + 3 * mt**2 * t * cx1 + 3 * mt * t**2 * cx2 + t**3 * cx
+            by = mt**3 * py + 3 * mt**2 * t * cy1 + 3 * mt * t**2 * cy2 + t**3 * cy
+
+            # Tangent for perpendicular
+            tbx = 3 * mt**2 * (cx1 - px) + 6 * mt * t * (cx2 - cx1) + 3 * t**2 * (cx - cx2)
+            tby = 3 * mt**2 * (cy1 - py) + 6 * mt * t * (cy2 - cy1) + 3 * t**2 * (cy - cy2)
+            length = math.sqrt(tbx**2 + tby**2) or 1.0
+            nx_dir = -tby / length
+            ny_dir = tbx / length
+
+            width = start_width + (end_width - start_width) * t
+            half_w = width / 2
+            points_top.append((bx + nx_dir * half_w, by + ny_dir * half_w))
+            points_bot.append((bx - nx_dir * half_w, by - ny_dir * half_w))
+
+        cr.set_source_rgba(r, g, b, 0.30)
+        cr.move_to(*points_top[0])
+        for pt in points_top[1:]:
+            cr.line_to(*pt)
+        for pt in reversed(points_bot):
+            cr.line_to(*pt)
+        cr.close_path()
+        cr.fill()
+
+    def _draw_collapse_indicator(self, cr, node, nw, nh, fg, entry_alpha):
+        tri_cx = node.pos_x + nw / 2 - 12
+        tri_cy = node.pos_y
+        tri_size = 5
+
+        cr.set_source_rgba(*fg, 0.5 * entry_alpha)
+        if node.collapsed:
+            # Right-pointing triangle
+            cr.move_to(tri_cx - tri_size * 0.6, tri_cy - tri_size)
+            cr.line_to(tri_cx + tri_size * 0.6, tri_cy)
+            cr.line_to(tri_cx - tri_size * 0.6, tri_cy + tri_size)
+        else:
+            # Down-pointing triangle
+            cr.move_to(tri_cx - tri_size, tri_cy - tri_size * 0.6)
+            cr.line_to(tri_cx, tri_cy + tri_size * 0.6)
+            cr.line_to(tri_cx + tri_size, tri_cy - tri_size * 0.6)
+        cr.close_path()
+        cr.fill()
+
+        # Count badge when collapsed
+        if node.collapsed:
+            count = self._descendant_count(node.id)
+            if count > 0:
+                badge_text = f"+{count}"
+                cr.select_font_face("Sans", 0, 0)
+                cr.set_font_size(9)
+                ext = cr.text_extents(badge_text)
+                badge_x = node.pos_x + nw / 2 + 6
+                badge_y = node.pos_y
+                badge_w = ext.width + 8
+                badge_h = 16
+                r, g, b = _hex(node.color)
+                cr.set_source_rgba(r, g, b, 0.3 * entry_alpha)
+                self._pill(cr, badge_x - badge_w / 2, badge_y - badge_h / 2,
+                           badge_w, badge_h, badge_h / 2)
+                cr.fill()
+                cr.set_source_rgba(*fg, 0.7 * entry_alpha)
+                cr.move_to(badge_x - ext.width / 2, badge_y + ext.height / 2 - 1)
+                cr.show_text(badge_text)
 
     def _node_size(self, n):
         is_root = n.parent_id is None
         nw = max(len(n.text) * 9 + 36, 90 if is_root else 70)
         nh = 44 if is_root else 36
+        if self._has_children(n.id):
+            nw += 18
         return nw, nh
 
     def _node_depth(self, n, node_map):
@@ -490,6 +784,14 @@ class MindMapView(Gtk.Box):
 
     def _on_click(self, gesture, n_press, sx, sy):
         wx, wy = self._screen_to_world(sx, sy)
+        # Check collapse toggle first
+        if n_press == 1:
+            toggle_node = self._collapse_toggle_hit(wx, wy)
+            if toggle_node:
+                toggle_node.collapsed = not toggle_node.collapsed
+                self.db.update_node_collapsed(toggle_node.id, toggle_node.collapsed)
+                self.canvas.queue_draw()
+                return
         hit = self._hit_test(wx, wy)
         self.selected_id = hit.id if hit else None
         self._update_buttons()
@@ -526,7 +828,6 @@ class MindMapView(Gtk.Box):
 
     def _on_drag_end(self, gesture, offset_x, offset_y):
         if self._drag_node:
-            # Persist position
             self.db.update_node_position(
                 self._drag_node.id, self._drag_node.pos_x, self._drag_node.pos_y
             )
@@ -543,15 +844,7 @@ class MindMapView(Gtk.Box):
         self.canvas.queue_draw()
 
     def _on_scroll(self, controller, dx, dy):
-        # Get pointer position for zoom-toward-cursor
-        seat = Gdk.Display.get_default().get_default_seat()
-        if seat:
-            alloc = self.canvas.get_allocation()
-            # Use last known mouse position
-            cx, cy = self._last_mouse_x, self._last_mouse_y
-        else:
-            alloc = self.canvas.get_allocation()
-            cx, cy = alloc.width / 2, alloc.height / 2
+        cx, cy = self._last_mouse_x, self._last_mouse_y
         delta = -dy * ZOOM_STEP * 0.8
         self._zoom_by(delta, cx, cy)
         return True
@@ -564,20 +857,181 @@ class MindMapView(Gtk.Box):
         new_hover = hit.id if hit else None
         if new_hover != self._hover_id:
             self._hover_id = new_hover
+            if not self._anim_active:
+                self._start_hover_tick()
             self.canvas.queue_draw()
 
     def _on_leave(self, controller):
         if self._hover_id is not None:
             self._hover_id = None
+            if not self._anim_active:
+                self._start_hover_tick()
             self.canvas.queue_draw()
 
     def _on_auto_layout(self, _btn):
-        if self.mindmap_id:
-            self.db.reset_node_positions(self.mindmap_id)
-            self.nodes = self.db.get_nodes(self.mindmap_id)
-            self._auto_layout()
-            self._save_all_positions()
-            self._zoom_fit()
+        if not self.mindmap_id:
+            return
+        # Capture current positions
+        origins = {}
+        for n in self.nodes:
+            if n.pos_x is not None:
+                origins[n.id] = (n.pos_x, n.pos_y)
+
+        self.db.reset_node_positions(self.mindmap_id)
+        self.nodes = self.db.get_nodes(self.mindmap_id)
+        self._auto_layout()
+
+        # Capture target positions
+        targets = {}
+        for n in self.nodes:
+            if n.pos_x is not None:
+                targets[n.id] = (n.pos_x, n.pos_y)
+
+        # Restore origins for animation start
+        for n in self.nodes:
+            if n.id in origins:
+                n.pos_x, n.pos_y = origins[n.id]
+
+        self._anim_origins = origins
+        self._anim_targets = targets
+        self._start_animation(duration=0.5)
+
+    # ── Right-Click Context Menu ─────────────────────────────────
+
+    def _on_right_click(self, gesture, n_press, sx, sy):
+        wx, wy = self._screen_to_world(sx, sy)
+        hit = self._hit_test(wx, wy)
+
+        if self._context_popover:
+            self._context_popover.unparent()
+            self._context_popover = None
+
+        if hit:
+            self._show_node_context_menu(hit, sx, sy)
+        else:
+            self._show_canvas_context_menu(sx, sy)
+
+    def _show_node_context_menu(self, node, sx, sy):
+        self._context_node = node
+        self.selected_id = node.id
+        self._update_buttons()
+        self.canvas.queue_draw()
+
+        menu = Gio.Menu()
+        menu.append("Add Child", "mm.add-child")
+        menu.append("Edit", "mm.edit-node")
+
+        if self._has_children(node.id):
+            label = "Expand" if node.collapsed else "Collapse"
+            menu.append(label, "mm.toggle-collapse")
+
+        root = self._root()
+        if not (root and node.id == root.id):
+            menu.append("Delete", "mm.delete-node")
+
+        # Color submenu
+        color_menu = Gio.Menu()
+        for i, color in enumerate(NODE_COLORS):
+            color_menu.append(color, f"mm.set-color-{i}")
+        menu.append_submenu("Change Color", color_menu)
+
+        ag = Gio.SimpleActionGroup()
+
+        a = Gio.SimpleAction(name="add-child")
+        a.connect("activate", lambda *_: self._ctx_add_child())
+        ag.add_action(a)
+
+        a = Gio.SimpleAction(name="edit-node")
+        a.connect("activate", lambda *_: self._on_edit(None))
+        ag.add_action(a)
+
+        a = Gio.SimpleAction(name="toggle-collapse")
+        a.connect("activate", lambda *_: self._ctx_toggle_collapse())
+        ag.add_action(a)
+
+        a = Gio.SimpleAction(name="delete-node")
+        a.connect("activate", lambda *_: self._on_delete(None))
+        ag.add_action(a)
+
+        for i, color in enumerate(NODE_COLORS):
+            a = Gio.SimpleAction(name=f"set-color-{i}")
+            a.connect("activate", lambda *_, c=color: self._ctx_set_color(c))
+            ag.add_action(a)
+
+        self.canvas.insert_action_group("mm", ag)
+
+        rect = Gdk.Rectangle()
+        rect.x = int(sx)
+        rect.y = int(sy)
+        rect.width = 1
+        rect.height = 1
+
+        p = Gtk.PopoverMenu(menu_model=menu, has_arrow=True, halign=Gtk.Align.START)
+        p.set_parent(self.canvas)
+        p.set_pointing_to(rect)
+        self._context_popover = p
+        p.popup()
+
+    def _show_canvas_context_menu(self, sx, sy):
+        menu = Gio.Menu()
+        menu.append("Add Root Child", "mm.add-root-child")
+        menu.append("Fit All", "mm.fit-all")
+        menu.append("Auto Layout", "mm.auto-layout")
+
+        ag = Gio.SimpleActionGroup()
+
+        a = Gio.SimpleAction(name="add-root-child")
+        a.connect("activate", lambda *_: self._ctx_add_root_child())
+        ag.add_action(a)
+
+        a = Gio.SimpleAction(name="fit-all")
+        a.connect("activate", lambda *_: self._zoom_fit())
+        ag.add_action(a)
+
+        a = Gio.SimpleAction(name="auto-layout")
+        a.connect("activate", lambda *_: self._on_auto_layout(None))
+        ag.add_action(a)
+
+        self.canvas.insert_action_group("mm", ag)
+
+        rect = Gdk.Rectangle()
+        rect.x = int(sx)
+        rect.y = int(sy)
+        rect.width = 1
+        rect.height = 1
+
+        p = Gtk.PopoverMenu(menu_model=menu, has_arrow=True, halign=Gtk.Align.START)
+        p.set_parent(self.canvas)
+        p.set_pointing_to(rect)
+        self._context_popover = p
+        p.popup()
+
+    def _ctx_add_child(self):
+        if self._context_node:
+            self.selected_id = self._context_node.id
+            self._on_add(None)
+
+    def _ctx_add_root_child(self):
+        root = self._root()
+        if root:
+            self.selected_id = root.id
+            self._on_add(None)
+
+    def _ctx_toggle_collapse(self):
+        if self._context_node:
+            self._context_node.collapsed = not self._context_node.collapsed
+            self.db.update_node_collapsed(self._context_node.id, self._context_node.collapsed)
+            self.canvas.queue_draw()
+
+    def _ctx_set_color(self, color):
+        if self._context_node:
+            self._context_node.color = color
+            self.db.update_node(self._context_node)
+            children_map = self._build_children_map()
+            self._propagate_color(self._context_node, children_map)
+            for n in self.nodes:
+                self.db.update_node(n)
+            self.canvas.queue_draw()
 
     # ── CRUD ─────────────────────────────────────────────────────
 
@@ -597,7 +1051,6 @@ class MindMapView(Gtk.Box):
     def _save_new_node(self, node, parent_id):
         node.mindmap_id = self.mindmap_id
         node.parent_id = parent_id
-        # Place near parent
         parent = next((n for n in self.nodes if n.id == parent_id), None)
         if parent and parent.pos_x is not None:
             angle = len([n for n in self.nodes if n.parent_id == parent_id]) * 0.8
@@ -606,8 +1059,10 @@ class MindMapView(Gtk.Box):
         else:
             node.pos_x = 0.0
             node.pos_y = 0.0
-        self.db.add_node(node)
+        new_id = self.db.add_node(node)
+        self._entry_anim_nodes[new_id] = 0.0
         self._refresh()
+        self._start_animation(duration=0.3)
         if self.on_change:
             self.on_change()
 
